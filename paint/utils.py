@@ -289,27 +289,142 @@ def expand_label_img(label_image, num_iter=2):
 
 
 def colorize_label_image(label_img_path, json_path, save_path, using="color"):
-    # Load label img from the label_img_path and color json from the json path.
-    # Output colorized img will be output to the save_path
+    """
+    Load label image + color mapping and generate RGBA colorized image.
+
+    Compatible with both:
+        RGB  color mapping: [R, G, B]
+        RGBA color mapping: [R, G, B, A]
+
+    BasicPBC's extract_color_dict() may generate RGB colors,
+    while the original implementation assumes RGBA.
+    """
+
+    # --------------------------------------------------------
+    # Load label image
+    # --------------------------------------------------------
+
     label_img_png = io.imread(label_img_path)
     label_img = labelpng_2_np(label_img_png)
+
+    # --------------------------------------------------------
+    # Load JSON
+    # --------------------------------------------------------
+
     with open(json_path, "r") as f:
         json_dict = json.load(f)
+
     assert using in ["color", "label"]
+
+    # --------------------------------------------------------
+    # Build color dictionary
+    # --------------------------------------------------------
+
     if using == "color":
         color_dict = json_dict
-    if using == "label":
-        color_dict = {k: default_colorbook[v] + [255] for k, v in json_dict.items()}
-    color_index = np.array(list(color_dict.values()))
-    color_index = np.insert(color_index, 0, [0, 0, 0, 255], axis=0)
+
+    elif using == "label":
+        color_dict = {
+            k: default_colorbook[v] + [255]
+            for k, v in json_dict.items()
+        }
+
+    # --------------------------------------------------------
+    # Convert colors to numpy
+    # --------------------------------------------------------
+
+    color_values = list(color_dict.values())
+
+    if len(color_values) == 0:
+        raise ValueError(
+            f"No colors found in JSON: {json_path}"
+        )
+
+    color_index = np.array(
+        color_values,
+        dtype=np.uint8
+    )
+
+    # --------------------------------------------------------
+    # RGB -> RGBA
+    # --------------------------------------------------------
+
+    if color_index.ndim != 2:
+        raise ValueError(
+            f"Invalid color array shape: {color_index.shape}"
+        )
+
+    if color_index.shape[1] == 3:
+
+        # RGB -> RGBA
+        alpha = np.full(
+            (color_index.shape[0], 1),
+            255,
+            dtype=np.uint8
+        )
+
+        color_index = np.concatenate(
+            [color_index, alpha],
+            axis=1
+        )
+
+    elif color_index.shape[1] == 4:
+
+        # Already RGBA
+        color_index = color_index.astype(
+            np.uint8
+        )
+
+    else:
+
+        raise ValueError(
+            "Color mapping must contain either "
+            f"3 or 4 channels, got {color_index.shape[1]}"
+        )
+
+    # --------------------------------------------------------
+    # Background / label 0
+    # --------------------------------------------------------
+
+    background_color = np.array(
+        [[0, 0, 0, 255]],
+        dtype=np.uint8
+    )
+
+    color_index = np.insert(
+        color_index,
+        0,
+        background_color,
+        axis=0
+    )
+
+    # --------------------------------------------------------
+    # Colorize
+    # --------------------------------------------------------
 
     h, w = label_img.shape
-    # colored_img = np.zeros((h, w, 4), dtype=np.uint8)
-    colored_img = np.take(color_index, label_img[:, :], axis=0)
-    colored_img = colored_img.astype(np.uint8)
-    io.imsave(save_path, colored_img, check_contrast=False)
-    return colored_img
 
+    colored_img = np.take(
+        color_index,
+        label_img[:, :],
+        axis=0
+    )
+
+    colored_img = colored_img.astype(
+        np.uint8
+    )
+
+    # --------------------------------------------------------
+    # Save
+    # --------------------------------------------------------
+
+    io.imsave(
+        save_path,
+        colored_img,
+        check_contrast=False
+    )
+
+    return colored_img
 
 def colorize_label_image_folder(label_dir, color_dir, save_dir):
     # Folder version of colorize_label_image(label_img_path,color_path,save_path)
